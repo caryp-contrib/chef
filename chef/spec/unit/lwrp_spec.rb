@@ -110,4 +110,23 @@ describe Chef::Provider do
     rc[6].name.should eql(:dried_paint_watched)
   end
   
+  it "should supported nested bash resources" do
+    node = Chef::Node.new
+    rc = Chef::ResourceCollection.new
+    
+    injector = Chef::Resource::LwrpNest.new("birdhouse")
+    injector.action(:nest)
+    injector.provider(Chef::Provider::LwrpNestings)
+    dummy = Chef::Resource::ZenMaster.new("keanu reeves")
+    dummy.provider(Chef::Provider::Easy)
+    rc.insert(injector)
+    rc.insert(dummy)
+    
+    Chef::Runner.new(node, rc, {}).converge
+    
+    rc[0].should eql(injector)
+    rc[1].name.should eql(:bash_nest)
+    rc[2].should eql(dummy)
+  end
+  
 end
