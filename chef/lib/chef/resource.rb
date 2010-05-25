@@ -32,7 +32,7 @@ class Chef
     include Chef::Mixin::Language
     include Chef::Mixin::ConvertToClassName
     
-    attr_accessor :params, :provider, :updated, :allowed_actions, :run_context, :cookbook_name, :recipe_name, :enclosing_provider
+    attr_accessor :params, :provider, :updated, :allowed_actions, :run_context, :cookbook_name, :recipe_name, :enclosing_provider, :persist
     attr_reader :resource_name, :source_line, :not_if_args, :only_if_args
 
     # Each notify entry is a resource/action pair, modeled as an
@@ -57,6 +57,8 @@ class Chef
       @only_if_args = {}
       @notifies_immediate = Array.new
       @notifies_delayed = Array.new
+      @persist = false
+
       sline = caller(4).shift
       if sline
         @source_line = sline.gsub!(/^(.+):(.+):.+$/, '\1 line \2')
@@ -80,18 +82,50 @@ class Chef
     end
     
     def load_prior_resource
+      # Attempt to load from current collection.
+      prior_resource = nil
       begin
         prior_resource = run_context.resource_collection.lookup(self.to_s)
         Chef::Log.debug("Setting #{self.to_s} to the state of the prior #{self.to_s}")
-        prior_resource.instance_variables.each do |iv|
-          unless iv.to_sym == :@source_line || iv.to_sym == :@action
-            self.instance_variable_set(iv, prior_resource.instance_variable_get(iv))
-          end
-        end
+        update_instance_vars(prior_resource)
         true
       rescue ArgumentError => e
         true
       end
+      
+      # Attempt to load from node if not found in resource_collection
+      unless prior_resource 
+        begin
+          key = self.to_sym
+          prior_resource = load_resource_from_node(key)
+          if prior_resource
+            Chef::Log.info("Setting #{self} to the state of the prior node[:resource_store][:#{key}] from node")
+            update_instance_vars(prior_resource)
+          end
+          true
+        rescue Exception => e
+          true
+        end
+      end      
+      
+    end
+    
+    def store_to_node
+      resource_copy = self.clone
+
+      # create parent hash if missing
+      run_context.node[:resource_store] = Hash.new unless run_context.node[:resource_store]
+
+      # don't serialize node
+      resource_copy.instance_variable_set(:@run_context, nil)
+      
+      # serialize resource to node
+      serialized = Marshal.dump(resource_copy)
+      key = resource_copy.to_sym
+      run_context.node[:resource_store][key] = serialized
+      Chef::Log.info("Resource persisted in node as node[:resource_store][#{key}]")
+  
+      true
     end
     
     def supports(args={})
@@ -149,6 +183,14 @@ class Chef
       end
     end
     
+    def persist(arg=nil) 
+      set_or_return(
+        :persist,
+        arg,
+        :kind_of => [ TrueClass, FalseClass ]
+      )
+    end
+
     def ignore_failure(arg=nil)
       set_or_return(
         :ignore_failure,
@@ -205,6 +247,10 @@ class Chef
     
     def to_s
       "#{@resource_name}[#{@name}]"
+    end
+    
+    def to_sym
+      "#{@resource_name}_#{@name}".to_sym
     end
     
     # Serialize this object as a hash 
@@ -362,6 +408,47 @@ class Chef
     end
     
     private
+    
+      def update_instance_vars(prior_resource)
+        prior_resource.instance_variables.each do |iv|
+        unless iv.to_sym == :@source_line || iv.to_sym == :@action || iv.to_sym == :@node
+            self.instance_variable_set(iv, prior_resource.instance_variable_get(iv))
+          end
+        end
+      end
+
+      def load_resource_from_node(key)
+        if run_context.node[:resource_store]
+          begin
+            resource = nil
+            resource = Marshal.load(run_context.node[:resource_store][key]) if run_context.node[:resource_store].has_key?(key)
+            Chef::Log.info("Resource #{resource} loaded from node[:resource_store][:#{key}]") if resource
+            resource
+          rescue Exception => e
+            Chef::Log.error("ERROR: cannot de-serialize persisted resource from node. #{e}")
+          end
+        end
+      end      
+
+      # Convert constant name to constant
+      #
+      #    "FooBar::Baz".to_const => FooBar::Baz
+      #
+      # @return [Constant] Constant corresponding to given name or nil if no
+      #   constant with that name exists
+      #
+      # @api public
+      def to_const(class_name)
+        names = class_name.split('::')
+        names.shift if names.empty? || names.first.empty?
+
+        constant = Object
+        names.each do |name|
+          # modified to return nil instead of raising an const_missing error
+          constant = constant && constant.const_defined?(name) ? constant.const_get(name) : nil
+        end
+        constant
+      end
     
       def lookup_provider_constant(name)
         begin

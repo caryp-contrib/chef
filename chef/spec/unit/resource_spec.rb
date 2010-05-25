@@ -32,6 +32,12 @@ describe Chef::Resource do
     @resource = Chef::Resource.new("funk", @run_context)
   end
   
+  describe "initialize" do
+    it "should create a new Chef::Resource" do
+      @resource.should be_a_kind_of(Chef::Resource)
+    end
+  end
+  
   describe "load_prior_resource" do
     before(:each) do
       @prior_resource = Chef::Resource.new("funk")
@@ -51,6 +57,35 @@ describe Chef::Resource do
     it "should not inherit the action from the prior resource" do
       @resource.load_prior_resource
       @resource.action.should_not == @prior_resource.action
+    end
+  end
+  
+  describe "load_prior_resource_from_node" do
+    before(:each) do
+      @persisted_resource = Chef::Resource.new("funk", @run_context)
+      @persisted_resource.supports(:funky => true)
+      @persisted_resource.source_line
+      @persisted_resource.allowed_actions << :funkytown
+      @persisted_resource.action(:funkytown)
+      @persisted_resource.provider Chef::Provider::Easy 
+      @persisted_resource.store_to_node
+      
+      @resource.action(:nothing)
+    end
+    
+    it "should load the allowed_actions of a prior resource" do
+      @resource.load_prior_resource
+      @resource.allowed_actions.should == [:nothing, :funkytown]
+    end
+    
+    it "should load the supports hash of a prior resource" do
+      @resource.load_prior_resource
+      @resource.supports.should == { :funky => true }
+    end
+    
+    it "should not inherit the action from the prior resource" do
+      @resource.load_prior_resource
+      @resource.action.should_not == @persisted_resource.action
     end
   end
 
@@ -78,6 +113,14 @@ describe Chef::Resource do
       lambda { @resource.noop true }.should_not raise_error(ArgumentError)
       lambda { @resource.noop false }.should_not raise_error(ArgumentError)
       lambda { @resource.noop "eat it" }.should raise_error(ArgumentError)
+    end
+  end
+  
+  describe "persist" do
+    it "should accept true or false for persist" do
+      lambda { @resource.persist true }.should_not raise_error(ArgumentError)
+      lambda { @resource.persist false }.should_not raise_error(ArgumentError)
+      lambda { @resource.persist "eat it" }.should raise_error(ArgumentError)
     end
   end
   
@@ -147,6 +190,13 @@ describe Chef::Resource do
     end
   end
   
+  describe "to_sym" do 
+    it "should become a symbol like :resource_name_name" do
+      zm = Chef::Resource::ZenMaster.new("coffee")
+      zm.to_sym.should eql(:zen_master_coffee)
+    end
+  end
+  
   describe "is" do
     it "should return the arguments passed with 'is'" do
       zm = Chef::Resource::ZenMaster.new("coffee")
@@ -175,7 +225,7 @@ describe Chef::Resource do
                         :updated, :before, :not_if, :supports, 
                         :notifies_delayed, :notifies_immediate, :noop,
                         :ignore_failure, :name, :source_line, :action,
-                        :not_if_args, :only_if_args
+                        :not_if_args, :only_if_args, :persist
                       ]
       (hash.keys - expected_keys).should == []
       (expected_keys - hash.keys).should == []
