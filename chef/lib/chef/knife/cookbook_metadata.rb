@@ -61,11 +61,11 @@ class Chef
         end
       end
 
-      def generate_metadata_from_file(cookbook, file)
+      def generate_metadata_from_file(cookbook_name, file)
         if File.exists?(file)
-          Chef::Log.debug("Generating metadata for #{cookbook} from #{file}")
-          md = Chef::Cookbook::Metadata.new
-          md.name(cookbook)
+          Chef::Log.debug("Generating metadata for #{cookbook_name} from #{file}")
+          cookbook = load_cookbook_with_recipe_names(cookbook_name, file)
+          md = Chef::Cookbook::Metadata.new(cookbook)
           md.from_file(file)
           json_file = File.join(File.dirname(file), 'metadata.json')
           File.open(json_file, "w") do |f|
@@ -75,6 +75,23 @@ class Chef
           Chef::Log.debug("Generated #{json_file}")
         else
           Chef::Log.debug("No #{file} found; skipping!")
+        end
+      end
+      
+      private
+      
+      def load_cookbook_with_recipe_names(cookbook_name, file)
+        cookbook = Chef::CookbookVersion.new(cookbook_name)
+        load_files_by_name(
+          File.join(File.dirname(file), "recipes", "*.rb"),
+          cookbook.recipe_filenames_by_name
+        )
+        cookbook
+      end
+      
+      def load_files_by_name(file_glob, result_hash)
+        Dir[file_glob].each do |file|
+          result_hash[File.basename(file, ".rb")] = file
         end
       end
     end
